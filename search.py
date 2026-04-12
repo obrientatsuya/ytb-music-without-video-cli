@@ -21,6 +21,8 @@ def load_playlist(url: str) -> list[dict]:
         "yt-dlp",
         "--flat-playlist",
         "--no-warnings", "--quiet",
+        "--yes-playlist",
+        "--playlist-items", "1-200",             # request up to 200 (radio caps ~25)
         "--print", "%(id)j\t%(title)j\t%(duration)j",
         url,
     ]
