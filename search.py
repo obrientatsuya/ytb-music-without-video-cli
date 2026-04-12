@@ -5,9 +5,11 @@ import re
 import subprocess
 import sys
 
-
-
 _PLAYLIST_RE = re.compile(r"[?&]list=", re.I)
+_SEP = "|SPLIT|"
+
+# Call yt-dlp via the same Python interpreter to avoid PATH issues
+_YTDLP_CMD = [sys.executable, "-m", "yt_dlp"]
 
 
 def is_playlist(url: str) -> bool:
@@ -17,19 +19,16 @@ def is_playlist(url: str) -> bool:
 def load_playlist(url: str) -> list[dict]:
     """Load all tracks from a playlist without downloading anything."""
     print("📋 Loading playlist...", end="\r", flush=True)
-    cmd = [
-        "yt-dlp",
+    cmd = _YTDLP_CMD + [
         "--flat-playlist",
         "--no-warnings", "--quiet",
         "--yes-playlist",
-        "--playlist-items", "1-200",             # request up to 200 (radio caps ~25)
-        "--print", "%(id)j\t%(title)j\t%(duration)j",
+        "--playlist-items", "1-500",
+        "--print", f"%(id)j{_SEP}%(title)j{_SEP}%(duration)j",
         url,
     ]
     try:
         raw = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        sys.exit("❌ yt-dlp not found: pip install yt-dlp")
     except subprocess.CalledProcessError:
         return []
 
@@ -40,17 +39,14 @@ def load_playlist(url: str) -> list[dict]:
 
 def search_youtube(query: str, max_results: int = 8) -> list[dict]:
     """Search by text, returns list of tracks."""
-    cmd = [
-        "yt-dlp",
+    cmd = _YTDLP_CMD + [
         "--flat-playlist",
         "--no-warnings", "--quiet",
-        "--print", "%(id)j\t%(title)j\t%(duration)j",
+        "--print", f"%(id)j{_SEP}%(title)j{_SEP}%(duration)j",
         f"ytsearch{max_results}:{query}",
     ]
     try:
         raw = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        sys.exit("❌ yt-dlp not found: pip install yt-dlp")
     except subprocess.CalledProcessError:
         return []
     return _parse(raw)
@@ -58,8 +54,7 @@ def search_youtube(query: str, max_results: int = 8) -> list[dict]:
 
 def get_stream_url(yt_url: str) -> str:
     """Resolve the direct opus/webm stream URL."""
-    cmd = [
-        "yt-dlp",
+    cmd = _YTDLP_CMD + [
         "--no-warnings", "--quiet",
         "--extractor-args", "youtube:skip=dash,hls",
         "-f", "bestaudio[acodec=opus]/bestaudio",
@@ -77,7 +72,7 @@ def get_stream_url(yt_url: str) -> str:
 def _parse(raw: str) -> list[dict]:
     results = []
     for line in raw.strip().splitlines():
-        parts = line.split("\t")
+        parts = line.split(_SEP)
         if len(parts) < 3:
             continue
         try:

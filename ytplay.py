@@ -5,7 +5,7 @@ import sys
 from search import search_youtube, load_playlist, is_playlist
 from player import play_queue
 from queue import Queue
-from ui import pick_result
+from ui import pick_result, show_playlist
 
 
 def main() -> None:
@@ -19,9 +19,13 @@ def main() -> None:
         tracks = load_playlist(arg)
         if not tracks:
             sys.exit("❌ Playlist is empty or invalid.")
-        print(f"▶  Playing playlist with {len(tracks)} tracks")
+
+        start = show_playlist(tracks)
+        if start == -1:
+            sys.exit(0)
+
         q = Queue(autoplay=True)
-        q.set_tracks(tracks, start=0)
+        q.set_tracks(tracks, start=start)
         play_queue(q)
         return
 
