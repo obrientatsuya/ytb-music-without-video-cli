@@ -1,4 +1,4 @@
-"""mpv_ipc.py - Controle do mpv via IPC socket (JSON commands em tempo real)."""
+"""mpv_ipc.py - Real-time mpv control via IPC socket (JSON commands)."""
 
 import json
 import os
@@ -10,7 +10,7 @@ import time
 
 
 class MpvIPC:
-    """Envia comandos ao mpv via socket IPC sem reiniciar o processo."""
+    """Send commands to mpv via IPC socket without restarting the process."""
 
     def __init__(self, socket_path: str):
         self.path = socket_path
@@ -22,8 +22,8 @@ class MpvIPC:
         for _ in range(retries):
             try:
                 if sys.platform == "win32":
-                    # Windows usa named pipe via socket AF_INET simulado
-                    # mpv no Windows suporta --input-ipc-server=\\.\pipe\nome
+                    # Windows uses named pipe; connect via AF_INET is not applicable
+                    # mpv on Windows supports --input-ipc-server=\\.\pipe\name
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     s.connect(("127.0.0.1", int(self.path)))
                 else:
@@ -45,7 +45,7 @@ class MpvIPC:
                 pass
 
     def set_volume(self, vol: int) -> None:
-        """vol: 0-130"""
+        """Set volume (0–130)."""
         self.send("set_property", "volume", max(0, min(130, vol)))
 
     def close(self) -> None:
@@ -57,15 +57,14 @@ class MpvIPC:
 
 
 def get_ipc_path() -> str:
-    """Retorna path único para o socket IPC desta sessão."""
+    """Return a unique IPC socket path for this session."""
     if sys.platform == "win32":
-        # No Windows usamos named pipe; retorna nome sem \\.\pipe\
-        return "ytplay-ipc"
+        return "ytplay-ipc"  # used as named pipe name
     return os.path.join(tempfile.gettempdir(), f"ytplay-{os.getpid()}.sock")
 
 
 def ipc_flag(path: str) -> str:
-    """Retorna a flag correta do mpv para o IPC."""
+    """Return the correct mpv flag for IPC based on platform."""
     if sys.platform == "win32":
         return f"--input-ipc-server=\\\\.\\pipe\\{path}"
     return f"--input-ipc-server={path}"

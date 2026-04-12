@@ -1,4 +1,4 @@
-"""search.py - Busca YouTube e carrega playlists via yt-dlp."""
+"""search.py - YouTube search and playlist loading via yt-dlp."""
 
 import json
 import re
@@ -15,8 +15,8 @@ def is_playlist(url: str) -> bool:
 
 
 def load_playlist(url: str) -> list[dict]:
-    """Carrega todos os tracks de uma playlist sem baixar nada."""
-    print("📋 Carregando playlist...", end="\r", flush=True)
+    """Load all tracks from a playlist without downloading anything."""
+    print("📋 Loading playlist...", end="\r", flush=True)
     cmd = [
         "yt-dlp",
         "--flat-playlist",
@@ -27,17 +27,17 @@ def load_playlist(url: str) -> list[dict]:
     try:
         raw = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
-        sys.exit("❌ yt-dlp não encontrado: pip install yt-dlp")
+        sys.exit("❌ yt-dlp not found: pip install yt-dlp")
     except subprocess.CalledProcessError:
         return []
 
     results = _parse(raw)
-    print(f"📋 {len(results)} músicas carregadas.          ")
+    print(f"📋 {len(results)} tracks loaded.          ")
     return results
 
 
 def search_youtube(query: str, max_results: int = 8) -> list[dict]:
-    """Busca por texto, retorna lista de tracks."""
+    """Search by text, returns list of tracks."""
     cmd = [
         "yt-dlp",
         "--flat-playlist",
@@ -48,14 +48,14 @@ def search_youtube(query: str, max_results: int = 8) -> list[dict]:
     try:
         raw = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
-        sys.exit("❌ yt-dlp não encontrado: pip install yt-dlp")
+        sys.exit("❌ yt-dlp not found: pip install yt-dlp")
     except subprocess.CalledProcessError:
         return []
     return _parse(raw)
 
 
 def get_stream_url(yt_url: str) -> str:
-    """Resolve URL direta do stream opus/webm."""
+    """Resolve the direct opus/webm stream URL."""
     cmd = [
         "yt-dlp",
         "--no-warnings", "--quiet",

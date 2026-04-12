@@ -1,4 +1,4 @@
-"""queue.py - Gerencia fila de músicas e navegação (anterior/próxima/autoplay)."""
+"""queue.py - Track queue management with navigation and autoplay."""
 
 from dataclasses import dataclass, field
 
@@ -9,7 +9,7 @@ class Queue:
     index: int = 0
     autoplay: bool = True
 
-    # --- navegação ---
+    # --- navigation ---
 
     def current(self) -> dict | None:
         if 0 <= self.index < len(self.tracks):
@@ -31,7 +31,7 @@ class Queue:
     def has_next(self) -> bool:
         return self.index + 1 < len(self.tracks)
 
-    # --- mutação ---
+    # --- mutation ---
 
     def set_tracks(self, tracks: list[dict], start: int = 0) -> None:
         self.tracks = tracks

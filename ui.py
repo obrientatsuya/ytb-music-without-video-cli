@@ -1,4 +1,4 @@
-"""ui.py - Seleção de resultado no terminal. Retorna índice (0-based)."""
+"""ui.py - Terminal result picker. Returns 0-based index."""
 
 import sys
 
@@ -9,9 +9,9 @@ def pick_result(results: list[dict]) -> int | None:
         print(f"  [{i}] {r['title']}  ({r['duration']})")
     print()
     while True:
-        raw = input(f"Escolha [1-{len(results)}] ou q: ").strip().lower()
+        raw = input(f"Choose [1-{len(results)}] or q to quit: ").strip().lower()
         if raw == "q":
             return None
         if raw.isdigit() and 1 <= int(raw) <= len(results):
-            return int(raw) - 1  # índice 0-based
-        print("    Opção inválida.")
+            return int(raw) - 1
+        print("    Invalid choice, try again.")

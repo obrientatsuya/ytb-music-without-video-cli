@@ -1,4 +1,4 @@
-"""player.py - Reproduz stream com fila, navegação, autoplay e controle de volume."""
+"""player.py - Audio playback with queue, navigation, autoplay and volume control."""
 
 import os
 import subprocess
@@ -17,19 +17,20 @@ _WINDOWS_MPV_PATHS = [
     r"C:\mpv\mpv.exe",
 ]
 
-VOL_STEP = 5   # % por tecla
+VOL_STEP = 5    # % per keypress
 VOL_MIN  = 0
 VOL_MAX  = 130
 
 
 # ---------------------------------------------------------------------------
-# API pública
+# Public API
 # ---------------------------------------------------------------------------
 
 def play_queue(queue) -> None:
+    """Play the entire queue respecting navigation and autoplay."""
     _, exe = _detect_backend()
     start_listener()
-    volume = [100]  # mutável via closure
+    volume = [100]  # mutable via closure
 
     while True:
         track = queue.current()
@@ -40,11 +41,11 @@ def play_queue(queue) -> None:
         action = _play_track(track, exe, queue, volume)
 
         if action == QUIT:
-            print("\n⏹  Parado.")
+            print("\n⏹  Stopped.")
             break
         elif action == NEXT:
             if not queue.next():
-                print("\n✅ Fim da fila.")
+                print("\n✅ End of queue.")
                 break
         elif action == PREV:
             queue.prev()
@@ -52,24 +53,23 @@ def play_queue(queue) -> None:
             if queue.autoplay and queue.has_next():
                 queue.next()
             else:
-                print("\n✅ Fim da fila.")
+                print("\n✅ End of queue.")
                 break
 
 
 # ---------------------------------------------------------------------------
-# Reprodução de uma faixa
+# Single track playback
 # ---------------------------------------------------------------------------
 
 def _play_track(track: dict, exe: str, queue, volume: list) -> str | None:
     stream_url = _resolve(track["yt_url"])
     if not stream_url:
-        print("❌ Falha ao resolver stream, pulando...")
+        print("❌ Failed to resolve stream, skipping...")
         return NEXT
 
     ipc_path = get_ipc_path()
     cmd = _build_cmd(exe, stream_url, ipc_path, volume[0])
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
     ipc = MpvIPC(ipc_path)
 
     try:
@@ -120,7 +120,7 @@ def _resolve(yt_url: str) -> str | None:
             pass
     t = threading.Thread(target=_r, daemon=True)
     t.start()
-    print("⏳ Resolvendo stream...", end="\r", flush=True)
+    print("⏳ Resolving stream...", end="\r", flush=True)
     t.join()
     return result.get("url")
 
@@ -131,8 +131,8 @@ def _print_status(queue, volume: int) -> None:
     total = len(queue.tracks)
     ap    = "ON" if queue.autoplay else "OFF"
     print(f"\n🎵 [{idx}/{total}] {track['title']}  ({track['duration']})")
-    print(f"   ↑/+ volume up  ↓/- volume down  (atual: {volume}%)")
-    print(f"   ←/p anterior   →/n próxima   a autoplay({ap})   q sair\n")
+    print(f"   ↑/+ volume up  ↓/- volume down  (current: {volume}%)")
+    print(f"   ←/p previous   →/n next   a autoplay({ap})   q quit\n")
 
 
 def _build_cmd(exe: str, url: str, ipc_path: str, volume: int) -> list[str]:
@@ -159,4 +159,4 @@ def _detect_backend() -> tuple[str, str]:
             return "mpv", p
     if shutil.which("powershell"):
         return "powershell", "powershell"
-    sys.exit("❌ Instale mpv ou ffmpeg.")
+    sys.exit("❌ Please install mpv or ffmpeg.")

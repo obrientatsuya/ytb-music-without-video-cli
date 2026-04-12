@@ -1,9 +1,9 @@
-"""controls.py - Captura teclas em background durante reprodução (Windows/Linux)."""
+"""controls.py - Background keyboard listener for playback controls (Windows/Linux)."""
 
 import sys
 import threading
 
-# Ações
+# Actions
 NEXT            = "next"
 PREV            = "prev"
 QUIT            = "quit"
@@ -31,7 +31,7 @@ def _listen_windows() -> None:
     while True:
         if msvcrt.kbhit():
             ch = msvcrt.getch()
-            if ch in (b'\xe0', b'\x00'):
+            if ch in (b'\xe0', b'\x00'):    # special key (arrow)
                 ch2 = msvcrt.getch()
                 if   ch2 == b'M': _push(NEXT)      # →
                 elif ch2 == b'K': _push(PREV)      # ←
@@ -55,10 +55,10 @@ def _listen_unix() -> None:
             ch = sys.stdin.read(1)
             if ch == '\x1b':
                 ch2 = sys.stdin.read(2)
-                if   ch2 == '[C': _push(NEXT)
-                elif ch2 == '[D': _push(PREV)
-                elif ch2 == '[A': _push(VOL_UP)
-                elif ch2 == '[B': _push(VOL_DOWN)
+                if   ch2 == '[C': _push(NEXT)      # →
+                elif ch2 == '[D': _push(PREV)      # ←
+                elif ch2 == '[A': _push(VOL_UP)    # ↑
+                elif ch2 == '[B': _push(VOL_DOWN)  # ↓
             elif ch == 'n': _push(NEXT)
             elif ch == 'p': _push(PREV)
             elif ch == '+': _push(VOL_UP)
@@ -70,6 +70,7 @@ def _listen_unix() -> None:
 
 
 def start_listener() -> None:
+    """Start background keyboard listener thread."""
     fn = _listen_windows if sys.platform == "win32" else _listen_unix
     t = threading.Thread(target=fn, daemon=True)
     t.start()

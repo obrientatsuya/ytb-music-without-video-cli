@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ytplay - Stream de áudio do YouTube no terminal. Sem download, sem GPU."""
+"""ytplay - YouTube audio streamer for the terminal. No downloads, no GPU."""
 
 import sys
 from search import search_youtube, load_playlist, is_playlist
@@ -9,26 +9,26 @@ from ui import pick_result
 
 
 def main() -> None:
-    arg = " ".join(sys.argv[1:]).strip() or input("Buscar ou colar link: ").strip()
+    arg = " ".join(sys.argv[1:]).strip() or input("Search or paste link: ").strip()
     if not arg:
-        sys.exit("❌ Nenhuma entrada informada.")
+        sys.exit("❌ No input provided.")
 
     # --- Playlist ---
     if is_playlist(arg):
         tracks = load_playlist(arg)
         if not tracks:
-            sys.exit("❌ Playlist vazia ou inválida.")
-        print(f"▶  Tocando playlist com {len(tracks)} músicas")
+            sys.exit("❌ Playlist is empty or invalid.")
+        print(f"▶  Playing playlist with {len(tracks)} tracks")
         q = Queue(autoplay=True)
         q.set_tracks(tracks, start=0)
         play_queue(q)
         return
 
-    # --- Busca por texto ---
+    # --- Text search ---
     print(f"🔍 {arg}")
     results = search_youtube(arg)
     if not results:
-        sys.exit("❌ Nenhum resultado encontrado.")
+        sys.exit("❌ No results found.")
 
     chosen_idx = pick_result(results)
     if chosen_idx is None:
