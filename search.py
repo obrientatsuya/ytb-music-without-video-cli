@@ -5,13 +5,13 @@ import re
 import subprocess
 import sys
 
-_PLAYLIST_RE = re.compile(
-    r"(youtube\.com/(playlist|watch)\?.*list=|youtu\.be/.+\?.*list=)", re.I
-)
+
+
+_PLAYLIST_RE = re.compile(r"[?&]list=", re.I)
 
 
 def is_playlist(url: str) -> bool:
-    return bool(_PLAYLIST_RE.search(url))
+    return "youtube.com" in url and bool(_PLAYLIST_RE.search(url))
 
 
 def load_playlist(url: str) -> list[dict]:

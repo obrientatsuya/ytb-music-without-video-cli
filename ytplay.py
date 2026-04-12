@@ -15,6 +15,7 @@ def main() -> None:
 
     # --- Playlist ---
     if is_playlist(arg):
+        print(f"📋 Playlist detected.")
         tracks = load_playlist(arg)
         if not tracks:
             sys.exit("❌ Playlist is empty or invalid.")
