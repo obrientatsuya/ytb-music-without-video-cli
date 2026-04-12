@@ -1,7 +1,10 @@
 # ytb-music-without-video-cli
-
-![descrição](ex.png)
 High-performance YouTube audio streamer for the terminal — no downloads, no video, no GPU.
+
+---
+![descrição](ex.png)
+---
+
 
 ---
 
