@@ -2,11 +2,8 @@
 High-performance YouTube audio streamer for the terminal — no downloads, no video, no GPU.
 
 ---
+![descrição](1.png)
 ---
-
-
----
-
 ## Installation — Windows
 
 ### 1. Python 3.11
