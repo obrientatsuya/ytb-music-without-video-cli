@@ -1,47 +1,75 @@
-"""mpv_ipc.py - Real-time mpv control via IPC socket (JSON commands)."""
+"""mpv_ipc.py - Real-time mpv volume control via IPC (Unix socket / Windows named pipe)."""
 
 import json
 import os
-import socket
 import sys
 import tempfile
 import threading
 import time
 
 
-class MpvIPC:
-    """Send commands to mpv via IPC socket without restarting the process."""
+def get_ipc_path() -> str:
+    """Return a unique IPC path for this session."""
+    if sys.platform == "win32":
+        return rf"\\.\pipe\ytplay-{os.getpid()}"
+    return os.path.join(tempfile.gettempdir(), f"ytplay-{os.getpid()}.sock")
 
-    def __init__(self, socket_path: str):
-        self.path = socket_path
-        self._sock: socket.socket | None = None
+
+def ipc_flag(path: str) -> str:
+    """Return the correct mpv --input-ipc-server flag."""
+    return f"--input-ipc-server={path}"
+
+
+class MpvIPC:
+    """Send JSON commands to mpv via named pipe (Windows) or Unix socket."""
+
+    def __init__(self, path: str):
+        self.path = path
         self._lock = threading.Lock()
+        self._handle = None
         self._connect()
 
-    def _connect(self, retries: int = 20) -> None:
+    def _connect(self, retries: int = 30) -> None:
         for _ in range(retries):
             try:
                 if sys.platform == "win32":
-                    # Windows uses named pipe; connect via AF_INET is not applicable
-                    # mpv on Windows supports --input-ipc-server=\\.\pipe\name
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.connect(("127.0.0.1", int(self.path)))
+                    self._handle = self._open_pipe()
                 else:
+                    import socket
                     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     s.connect(self.path)
-                self._sock = s
+                    self._handle = s
                 return
-            except (ConnectionRefusedError, FileNotFoundError, OSError):
+            except Exception:
                 time.sleep(0.1)
 
+    def _open_pipe(self):
+        import ctypes, ctypes.wintypes
+        GENERIC_WRITE = 0x40000000
+        OPEN_EXISTING = 3
+        handle = ctypes.windll.kernel32.CreateFileW(
+            self.path, GENERIC_WRITE, 0, None, OPEN_EXISTING, 0, None
+        )
+        if handle == ctypes.wintypes.HANDLE(-1).value:
+            raise OSError("Pipe not available")
+        return handle
+
     def send(self, *args) -> None:
-        if not self._sock:
+        if self._handle is None:
             return
-        cmd = json.dumps({"command": list(args)}) + "\n"
+        data = (json.dumps({"command": list(args)}) + "\n").encode()
         with self._lock:
             try:
-                self._sock.sendall(cmd.encode())
-            except OSError:
+                if sys.platform == "win32":
+                    import ctypes
+                    written = ctypes.c_ulong(0)
+                    ctypes.windll.kernel32.WriteFile(
+                        self._handle, data, len(data),
+                        ctypes.byref(written), None
+                    )
+                else:
+                    self._handle.sendall(data)
+            except Exception:
                 pass
 
     def set_volume(self, vol: int) -> None:
@@ -49,22 +77,14 @@ class MpvIPC:
         self.send("set_property", "volume", max(0, min(130, vol)))
 
     def close(self) -> None:
-        if self._sock:
-            try:
-                self._sock.close()
-            except OSError:
-                pass
-
-
-def get_ipc_path() -> str:
-    """Return a unique IPC socket path for this session."""
-    if sys.platform == "win32":
-        return "ytplay-ipc"  # used as named pipe name
-    return os.path.join(tempfile.gettempdir(), f"ytplay-{os.getpid()}.sock")
-
-
-def ipc_flag(path: str) -> str:
-    """Return the correct mpv flag for IPC based on platform."""
-    if sys.platform == "win32":
-        return f"--input-ipc-server=\\\\.\\pipe\\{path}"
-    return f"--input-ipc-server={path}"
+        if self._handle is None:
+            return
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                ctypes.windll.kernel32.CloseHandle(self._handle)
+            else:
+                self._handle.close()
+        except Exception:
+            pass
+        self._handle = None

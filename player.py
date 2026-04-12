@@ -1,6 +1,8 @@
 """player.py - Audio playback with queue, navigation, autoplay and volume control."""
 
+import atexit
 import os
+import signal
 import subprocess
 import shutil
 import sys
@@ -17,9 +19,49 @@ _WINDOWS_MPV_PATHS = [
     r"C:\mpv\mpv.exe",
 ]
 
-VOL_STEP = 5    # % per keypress
+VOL_STEP = 5
 VOL_MIN  = 0
 VOL_MAX  = 130
+
+# Global reference so atexit / signal handlers can kill mpv
+_current_proc: subprocess.Popen | None = None
+
+
+def _kill_current() -> None:
+    """Kill the active mpv process — called on exit or crash."""
+    global _current_proc
+    if _current_proc and _current_proc.poll() is None:
+        try:
+            _current_proc.terminate()
+            _current_proc.wait(timeout=2)
+        except Exception:
+            try:
+                _current_proc.kill()
+            except Exception:
+                pass
+    _current_proc = None
+
+
+# Register cleanup for normal exit, Ctrl+C, and terminal close (SIGHUP on Unix)
+atexit.register(_kill_current)
+
+if sys.platform != "win32":
+    signal.signal(signal.SIGHUP, lambda *_: (_kill_current(), sys.exit(0)))
+    signal.signal(signal.SIGTERM, lambda *_: (_kill_current(), sys.exit(0)))
+else:
+    # Windows: handle console close event via SetConsoleCtrlHandler
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        @ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.DWORD)
+        def _ctrl_handler(event):
+            _kill_current()
+            return False  # let Windows proceed with default handling
+
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_ctrl_handler, True)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +72,7 @@ def play_queue(queue) -> None:
     """Play the entire queue respecting navigation and autoplay."""
     _, exe = _detect_backend()
     start_listener()
-    volume = [100]  # mutable via closure
+    volume = [100]
 
     while True:
         track = queue.current()
@@ -62,6 +104,8 @@ def play_queue(queue) -> None:
 # ---------------------------------------------------------------------------
 
 def _play_track(track: dict, exe: str, queue, volume: list) -> str | None:
+    global _current_proc
+
     stream_url = _resolve(track["yt_url"])
     if not stream_url:
         print("❌ Failed to resolve stream, skipping...")
@@ -69,11 +113,14 @@ def _play_track(track: dict, exe: str, queue, volume: list) -> str | None:
 
     ipc_path = get_ipc_path()
     cmd = _build_cmd(exe, stream_url, ipc_path, volume[0])
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    _current_proc = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
     ipc = MpvIPC(ipc_path)
 
     try:
-        while proc.poll() is None:
+        while _current_proc.poll() is None:
             action = get_action()
 
             if action == TOGGLE_AUTOPLAY:
@@ -92,18 +139,19 @@ def _play_track(track: dict, exe: str, queue, volume: list) -> str | None:
                 print(f"\r🔉 Volume: {volume[0]}%    ", flush=True)
 
             elif action in (NEXT, PREV, QUIT):
-                proc.terminate()
+                _kill_current()
                 ipc.close()
                 return action
 
             time.sleep(0.05)
 
     except KeyboardInterrupt:
-        proc.terminate()
+        _kill_current()
         ipc.close()
         return QUIT
 
     ipc.close()
+    _current_proc = None
     return None
 
 
