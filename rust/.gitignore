@@ -1,0 +1,5 @@
+/target
+/vendor/yt-dlp_linux
+/vendor/yt-dlp_linux_aarch64
+/vendor/yt-dlp.exe
+/vendor/yt-dlp_macos

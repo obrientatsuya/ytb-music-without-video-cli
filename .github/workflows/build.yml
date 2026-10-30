@@ -1,0 +1,60 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: ytplay-linux-x86_64
+            binary: target/release/ytplay
+          - os: windows-latest
+            artifact: ytplay-windows-x86_64
+            binary: target/release/ytplay.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux audio headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Fetch embedded yt-dlp (Linux)
+        if: runner.os == 'Linux'
+        run: ./scripts/fetch-yt-dlp.sh linux
+
+      - name: Fetch embedded yt-dlp (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/fetch-yt-dlp.ps1
+
+      - name: Static CRT (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV'
+
+      - name: Test
+        run: cargo test --release
+
+      - name: Build
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: rust/${{ matrix.binary }}
+          if-no-files-found: error
