@@ -12,6 +12,9 @@ executable and plays AAC audio in-process with [rodio](https://github.com/RustAu
 
 ![ytplay tocando Yung Buda no Arch](screenshot.png)
 
+<sub>Arch/CachyOS + kitty + fastfetch, tocando Yung Buda — Piloto. O `fastfetch`
+mostra a RAM do sistema; o processo do ytplay fica em ~5,9 MB.</sub>
+
 ## Why this version
 
 | | Python + mpv (old) | Rust single binary |
