@@ -6,9 +6,6 @@ mpv, no browser, no video decoding. Linux and Windows.
 The Rust version lives in [`rust/`](rust/). It embeds `yt-dlp` inside the
 executable and plays AAC audio in-process with [rodio](https://github.com/RustAudio/rodio).
 
----
-![descrição](1.png)
----
 
 ![ytplay tocando Yung Buda no Arch](screenshot.png)
 
