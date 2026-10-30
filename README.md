@@ -1,4 +1,4 @@
-# ytplay
+# ytb-music-without-video-cli
 
 A **single-binary** YouTube audio streamer for the terminal. No Python, no
 mpv, no browser, no video decoding. Linux and Windows.
