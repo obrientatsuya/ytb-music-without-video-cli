@@ -1,5 +1,8 @@
-"""queue.py - Track queue management with navigation and autoplay."""
+"""playqueue.py - Track queue management with navigation and autoplay."""
 
+from __future__ import annotations
+
+import random
 from dataclasses import dataclass, field
 
 
@@ -40,3 +43,16 @@ class Queue:
     def toggle_autoplay(self) -> bool:
         self.autoplay = not self.autoplay
         return self.autoplay
+
+    def shuffle(self, keep_current: bool = True) -> None:
+        """Shuffle the queue, optionally leaving the current track first."""
+        current = self.current()
+        random.shuffle(self.tracks)
+        if keep_current and current is not None:
+            try:
+                self.tracks.remove(current)
+            except ValueError:
+                pass
+            else:
+                self.tracks.insert(0, current)
+        self.index = 0

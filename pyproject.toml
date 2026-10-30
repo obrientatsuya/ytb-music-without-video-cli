@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ytb-music-without-video-cli"
+dynamic = ["version"]
+description = "Terminal YouTube audio streamer. Search, pick, and stream music without video or downloads."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Luiz Fernando", email = "39151654+obrientatsuya@users.noreply.github.com" },
+]
+dependencies = ["yt-dlp>=2024.1.1"]
+
+[project.scripts]
+ytplay = "ytplay_cli.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ytplay_cli*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ytplay_cli.__version__" }
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
