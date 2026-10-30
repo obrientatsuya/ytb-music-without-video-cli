@@ -27,18 +27,19 @@ back to single-digit MB.
 
 ## Download and run
 
-Release binaries are built by [`.github/workflows/build.yml`](.github/workflows/build.yml)
-(Actions → build → artifacts):
+Download the latest binaries from the [release page](https://github.com/obrientatsuya/ytb-music-without-video-cli/releases/latest):
 
-- **Windows:** download `ytplay-windows-x86_64.exe`, rename it to
-  `ytplay.exe` if you want, and double-click it. A console window opens.
-- **Linux:** download `ytplay-linux-x86_64`, make it executable once, and
-  double-click or run it:
+- **Windows:** [`ytplay-windows-x86_64.exe`](https://github.com/obrientatsuya/ytb-music-without-video-cli/releases/latest/download/ytplay-windows-x86_64.exe).
+  Double-click it. A console window opens.
+- **Linux:** [`ytplay-linux-x86_64`](https://github.com/obrientatsuya/ytb-music-without-video-cli/releases/latest/download/ytplay-linux-x86_64).
+  Make it executable once and double-click or run it:
 
 ```bash
 chmod +x ytplay-linux-x86_64
 ./ytplay-linux-x86_64
 ```
+
+Release binaries are built by [`.github/workflows/build.yml`](.github/workflows/build.yml).
 
 On Linux, if the binary is launched without a terminal (double-click from a
 file manager), it detects that and opens one of the installed terminal
