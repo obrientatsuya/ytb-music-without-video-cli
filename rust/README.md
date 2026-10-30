@@ -77,8 +77,20 @@ device:
 
 | Stage | RSS | CPU |
 |---|---:|---:|
-| Rust process during playback | ~6.5 MB | ~0.4% average |
-| Peak while `yt-dlp` resolves | ~94 MB total | one-core burst for ~2–5 s |
-| Search peak | ~82 MB total | one-core burst for ~2 s |
+| Rust process during playback | ~5.9 MB | ~0.4% average |
+| Peak while `yt-dlp` resolves | ~90 MB total | one-core burst for ~2–5 s |
+| Search peak | ~80.5 MB total | one-core burst for ~2 s |
 
 The `yt-dlp` child exits after resolving; playback stays in single-digit MB.
+
+RAM choices in the current code:
+
+- `ureq` (blocking, no tokio/hyper runtime) instead of `reqwest`.
+- `yt-dlp --print` field lines instead of `-J` JSON documents.
+- no JavaScript runtime (`--no-js-runtimes` with the music clients).
+- 32 KB HTTP read buffer.
+- no Python, no mpv process.
+- no `rand`/`dirs`/`tempfile`/`clap` dependencies; small hand-written CLI and
+  temporary-directory cleanup.
+
+The CLI uses one-letter flags: `-n`, `-p`, `-N`, `-s`, `-v`, `-S`, `-V`, `-h`.

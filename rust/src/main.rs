@@ -11,17 +11,12 @@ use std::io::{self, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
-use rand::seq::SliceRandom;
-use reqwest::blocking::{Client, Response};
-use reqwest::header::{CONTENT_RANGE, RANGE, USER_AGENT};
 use rodio::{Decoder, DeviceSinkBuilder, Player, Source};
-use serde_json::Value;
 use url::Url;
 
 mod embedded {
@@ -32,7 +27,7 @@ const SEEK_STEP: u64 = 5;
 const VOL_MIN: i32 = 0;
 const VOL_MAX: i32 = 130;
 const VOL_STEP: i32 = 5;
-const HTTP_BUFFER: usize = 64 * 1024;
+const HTTP_BUFFER: usize = 32 * 1024;
 const DEFAULT_UA: &str = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 \
     (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36";
 
@@ -40,62 +35,15 @@ const DEFAULT_UA: &str = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 \
 // CLI
 // ---------------------------------------------------------------------------
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "ytplay",
-    version,
-    about = "Stream YouTube audio in the terminal. Single binary, no video.",
-    after_help = "Examples:\n  ytplay \"daft punk instant crush\"\n  \
-                  ytplay https://youtu.be/VIDEO_ID\n  \
-                  ytplay --no-autoplay --volume 80 PLAYLIST_URL"
-)]
+#[derive(Debug)]
 struct Cli {
-    /// Search terms or a YouTube video/playlist URL
-    #[arg(value_name = "QUERY")]
     query: Vec<String>,
-
-    /// Number of search results to show
-    #[arg(
-        short = 'n',
-        long,
-        default_value_t = 8,
-        value_parser = clap::value_parser!(u32).range(1..=50),
-        value_name = "N"
-    )]
-    limit: u32,
-
-    /// Maximum playlist tracks to load
-    #[arg(
-        long,
-        default_value_t = 500,
-        value_parser = clap::value_parser!(u32).range(1..=5000),
-        value_name = "N"
-    )]
-    playlist_limit: u32,
-
-    /// Stop after the current track
-    #[arg(long)]
+    limit: usize,
+    playlist_limit: usize,
     no_autoplay: bool,
-
-    /// Shuffle the queue, keeping the chosen track first
-    #[arg(long)]
     shuffle: bool,
-
-    /// Initial volume (0-130)
-    #[arg(
-        long,
-        default_value_t = 100,
-        value_parser = clap::value_parser!(u32).range(0..=130),
-        value_name = "0-130"
-    )]
-    volume: u32,
-
-    /// For a URL with a playlist, play only its video
-    #[arg(long)]
+    volume: i32,
     single: bool,
-
-    /// Play a local audio file (debug helper)
-    #[arg(long, hide = true)]
     play_file: Option<PathBuf>,
 }
 
@@ -108,11 +56,26 @@ fn main() {
         eprintln!("{message}");
     }));
 
-    if !has_informational_flag() && try_reexec_in_terminal() {
+    let args: Vec<OsString> = env::args_os().skip(1).collect();
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        print_help();
+        return;
+    }
+    if args.iter().any(|arg| arg == "-V" || arg == "--version") {
+        println!("ytplay {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    if try_reexec_in_terminal() {
         return;
     }
 
-    let cli = Cli::parse();
+    let cli = match parse_args(args) {
+        Ok(cli) => cli,
+        Err(err) => {
+            eprintln!("❌ {err:#}");
+            std::process::exit(2);
+        }
+    };
     if let Err(err) = run(cli) {
         eprintln!("❌ {err:#}");
         if env::args_os().len() == 1 && io::stdin().is_terminal() {
@@ -124,13 +87,128 @@ fn main() {
     }
 }
 
-fn has_informational_flag() -> bool {
-    env::args_os().skip(1).any(|arg| {
-        arg == OsStr::new("-h")
-            || arg == OsStr::new("--help")
-            || arg == OsStr::new("-V")
-            || arg == OsStr::new("--version")
-    })
+fn print_help() {
+    println!(
+        r#"ytplay {} - stream YouTube audio in the terminal
+
+Usage: ytplay [OPTIONS] [QUERY]...
+
+Options:
+  -n N   search results (1-50, default 8)
+  -p N   playlist tracks (default 500)
+  -N     stop after the current track
+  -s     shuffle, keeping the chosen track first
+  -v N   volume (0-130, default 100)
+  -S     for a playlist URL, play only its video
+  -f F   play a local audio file (debug)
+  -h     this help
+  -V     version
+
+Examples:
+  ytplay "yung buda"
+  ytplay -N -v 80 https://youtu.be/VIDEO_ID
+  ytplay -s -p 100 PLAYLIST_URL"#,
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn parse_args<I>(args: I) -> Result<Cli>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut cli = Cli {
+        query: Vec::new(),
+        limit: 8,
+        playlist_limit: 500,
+        no_autoplay: false,
+        shuffle: false,
+        volume: 100,
+        single: false,
+        play_file: None,
+    };
+    let mut args = args.into_iter();
+    let mut options = true;
+
+    while let Some(argument) = args.next() {
+        let text = argument.to_string_lossy().into_owned();
+        if options && text == "--" {
+            options = false;
+            continue;
+        }
+        if !options {
+            cli.query.push(text);
+            continue;
+        }
+
+        match text.as_str() {
+            "-N" | "--no-autoplay" => cli.no_autoplay = true,
+            "-s" | "--shuffle" => cli.shuffle = true,
+            "-S" | "--single" => cli.single = true,
+            "-n" | "--limit" => {
+                let value = args
+                    .next()
+                    .with_context(|| format!("{text} needs a value"))?;
+                cli.limit = parse_number(&value, 1, 50, "limit")? as usize;
+            }
+            "-p" | "--playlist-limit" => {
+                let value = args
+                    .next()
+                    .with_context(|| format!("{text} needs a value"))?;
+                cli.playlist_limit = parse_number(&value, 1, 5000, "playlist limit")? as usize;
+            }
+            "-v" | "--volume" => {
+                let value = args
+                    .next()
+                    .with_context(|| format!("{text} needs a value"))?;
+                cli.volume = parse_number(&value, 0, 130, "volume")? as i32;
+            }
+            "-f" | "--play-file" => {
+                cli.play_file = Some(PathBuf::from(
+                    args.next()
+                        .with_context(|| format!("{text} needs a value"))?,
+                ));
+            }
+            _ => {
+                if let Some(value) = text.strip_prefix("--limit=") {
+                    cli.limit = parse_text_number(value, 1, 50, "limit")? as usize;
+                } else if let Some(value) = text.strip_prefix("--playlist-limit=") {
+                    cli.playlist_limit =
+                        parse_text_number(value, 1, 5000, "playlist limit")? as usize;
+                } else if let Some(value) = text.strip_prefix("--volume=") {
+                    cli.volume = parse_text_number(value, 0, 130, "volume")? as i32;
+                } else if let Some(value) = text.strip_prefix("-n").filter(|v| !v.is_empty()) {
+                    cli.limit = parse_text_number(value, 1, 50, "limit")? as usize;
+                } else if let Some(value) = text.strip_prefix("-p").filter(|v| !v.is_empty()) {
+                    cli.playlist_limit =
+                        parse_text_number(value, 1, 5000, "playlist limit")? as usize;
+                } else if let Some(value) = text.strip_prefix("-v").filter(|v| !v.is_empty()) {
+                    cli.volume = parse_text_number(value, 0, 130, "volume")? as i32;
+                } else if let Some(value) = text.strip_prefix("-f").filter(|v| !v.is_empty()) {
+                    cli.play_file = Some(PathBuf::from(value));
+                } else if text.starts_with('-') {
+                    bail!("unknown option: {text}");
+                } else {
+                    cli.query.push(text);
+                }
+            }
+        }
+    }
+    Ok(cli)
+}
+
+fn parse_number(value: &OsStr, min: u32, max: u32, name: &str) -> Result<u32> {
+    let text = value.to_string_lossy();
+    parse_text_number(&text, min, max, name)
+}
+
+fn parse_text_number(value: &str, min: u32, max: u32, name: &str) -> Result<u32> {
+    let number: u32 = value
+        .parse()
+        .with_context(|| format!("{name} must be a number"))?;
+    if !(min..=max).contains(&number) {
+        bail!("{name} must be between {min} and {max}");
+    }
+    Ok(number)
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -170,7 +248,7 @@ fn run(cli: Cli) -> Result<()> {
         let yt = ytdlp_ref(&mut ytdlp)?;
         if is_playlist(&url) && !cli.single {
             println!("📋 Playlist detected.");
-            let tracks = yt.playlist(url.as_str(), cli.playlist_limit as usize)?;
+            let tracks = yt.playlist(url.as_str(), cli.playlist_limit)?;
             if tracks.is_empty() {
                 bail!("Playlist is empty or unavailable.");
             }
@@ -195,7 +273,7 @@ fn run(cli: Cli) -> Result<()> {
     } else {
         println!("🔍 {query}");
         let yt = ytdlp_ref(&mut ytdlp)?;
-        let tracks = yt.search(&query, cli.limit as usize)?;
+        let tracks = yt.search(&query, cli.limit)?;
         if tracks.is_empty() {
             bail!("No results found.");
         }
@@ -209,7 +287,7 @@ fn run(cli: Cli) -> Result<()> {
         queue.shuffle();
     }
 
-    play_queue(&mut queue, &mut ytdlp, cli.volume as i32)
+    play_queue(&mut queue, &mut ytdlp, cli.volume)
 }
 
 fn ytdlp_ref(slot: &mut Option<YtDlp>) -> Result<&YtDlp> {
@@ -299,11 +377,37 @@ struct YtDlp {
 }
 
 struct DownloadedAudio {
-    _directory: tempfile::TempDir,
+    _directory: TempDirectory,
     path: PathBuf,
     len: u64,
     title: Option<String>,
     duration: Option<u64>,
+}
+
+struct TempDirectory {
+    path: PathBuf,
+}
+
+impl TempDirectory {
+    fn new() -> Result<Self> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("ytplay-{}-{nanos}", std::process::id()));
+        fs::create_dir(&path).with_context(|| format!("could not create {}", path.display()))?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 struct StreamInfo {
@@ -352,11 +456,6 @@ impl YtDlp {
         Ok(stdout)
     }
 
-    fn json<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<Value> {
-        let stdout = self.run(args)?;
-        serde_json::from_str(&stdout).context("yt-dlp returned invalid JSON")
-    }
-
     fn search(&self, query: &str, limit: usize) -> Result<Vec<Track>> {
         let target = format!("ytsearch{limit}:{query}");
         let args = vec![
@@ -364,10 +463,12 @@ impl YtDlp {
             "--no-warnings".to_owned(),
             "--quiet".to_owned(),
             "--ignore-errors".to_owned(),
-            "-J".to_owned(),
+            "--no-js-runtimes".to_owned(),
+            "--print".to_owned(),
+            "%(id)j\t%(title)j\t%(duration)j".to_owned(),
             target,
         ];
-        Ok(entries_to_tracks(&self.json(&args)?))
+        Ok(parse_track_lines(&self.run(&args)?))
     }
 
     fn playlist(&self, url: &str, limit: usize) -> Result<Vec<Track>> {
@@ -376,15 +477,17 @@ impl YtDlp {
             "--no-warnings".to_owned(),
             "--quiet".to_owned(),
             "--ignore-errors".to_owned(),
+            "--no-js-runtimes".to_owned(),
             "--yes-playlist".to_owned(),
+            "--print".to_owned(),
+            "%(id)j\t%(title)j\t%(duration)j".to_owned(),
         ];
         if limit > 0 {
             args.push("--playlist-items".to_owned());
             args.push(format!("1-{limit}"));
         }
-        args.push("-J".to_owned());
         args.push(url.to_owned());
-        Ok(entries_to_tracks(&self.json(&args)?))
+        Ok(parse_track_lines(&self.run(&args)?))
     }
 
     fn stream(&self, url: &str) -> Result<StreamInfo> {
@@ -421,10 +524,7 @@ impl YtDlp {
     }
 
     fn download(&self, url: &str) -> Result<DownloadedAudio> {
-        let directory = tempfile::Builder::new()
-            .prefix("ytplay-")
-            .tempdir()
-            .context("could not create temporary audio directory")?;
+        let directory = TempDirectory::new()?;
         let path = directory.path().join("audio.m4a");
         let args = vec![
             "--no-playlist".to_owned(),
@@ -470,6 +570,33 @@ fn parse_printed_metadata(output: &str) -> (Option<String>, Option<u64>) {
         }
     }
     (None, None)
+}
+
+fn parse_track_lines(output: &str) -> Vec<Track> {
+    output.lines().filter_map(parse_track_line).collect()
+}
+
+fn parse_track_line(line: &str) -> Option<Track> {
+    let mut parts = line.splitn(3, '\t');
+    let id = serde_json::from_str::<Option<String>>(parts.next()?)
+        .ok()
+        .flatten()?;
+    if id.is_empty() || id == "NA" {
+        return None;
+    }
+    let title = serde_json::from_str::<Option<String>>(parts.next()?)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "YouTube video".to_owned());
+    let duration = serde_json::from_str::<Option<f64>>(parts.next()?)
+        .ok()
+        .flatten()
+        .map(|value| value.max(0.0) as u64);
+    Some(Track {
+        title: clean_title(&title),
+        source: TrackSource::YouTube(format!("https://www.youtube.com/watch?v={id}")),
+        duration,
+    })
 }
 
 fn parse_metadata_line(line: &str) -> (Option<String>, Option<u64>) {
@@ -521,45 +648,6 @@ fn stream_len(url: &str) -> Option<u64> {
         .ok()
 }
 
-fn entries_to_tracks(value: &Value) -> Vec<Track> {
-    value
-        .get("entries")
-        .and_then(Value::as_array)
-        .map(|entries| entries.iter().filter_map(entry_to_track).collect())
-        .unwrap_or_default()
-}
-
-fn entry_to_track(entry: &Value) -> Option<Track> {
-    let id = entry.get("id").and_then(Value::as_str)?;
-    if id.is_empty() || id == "NA" {
-        return None;
-    }
-    let title = entry
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("YouTube video");
-    let duration = entry.get("duration").and_then(Value::as_f64);
-    let webpage = entry
-        .get("webpage_url")
-        .and_then(Value::as_str)
-        .filter(|value| value.starts_with("http"))
-        .or_else(|| {
-            entry
-                .get("url")
-                .and_then(Value::as_str)
-                .filter(|value| value.starts_with("http"))
-        });
-    Some(Track {
-        title: clean_title(title),
-        source: TrackSource::YouTube(
-            webpage
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("https://www.youtube.com/watch?v={id}")),
-        ),
-        duration: duration.map(|value| value.max(0.0) as u64),
-    })
-}
-
 fn clean_title(value: &str) -> String {
     let printable: String = value
         .chars()
@@ -581,6 +669,24 @@ fn exe_name(name: &str) -> String {
     }
 }
 
+fn cache_directory() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(local_app_data).join("ytplay");
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join("Library/Caches/ytplay");
+    }
+    if let Some(cache) = env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(cache).join("ytplay");
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".cache/ytplay");
+    }
+    env::temp_dir().join("ytplay")
+}
+
 fn find_in_path(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     env::split_paths(&path)
@@ -595,10 +701,7 @@ fn extract_embedded(
     versioned: bool,
     windows: bool,
 ) -> Result<PathBuf> {
-    let base = dirs::cache_dir()
-        .unwrap_or_else(env::temp_dir)
-        .join("ytplay")
-        .join("bin");
+    let base = cache_directory().join("bin");
     fs::create_dir_all(&base).with_context(|| format!("could not create {}", base.display()))?;
 
     let version = if version.is_empty() {
@@ -703,8 +806,18 @@ impl Queue {
             return;
         }
         let current = self.current().cloned();
-        let mut rng = rand::rng();
-        self.tracks.shuffle(&mut rng);
+        let mut seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
+            ^ u64::from(std::process::id());
+        for index in (1..self.tracks.len()).rev() {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let swap = (seed as usize) % (index + 1);
+            self.tracks.swap(index, swap);
+        }
         if let Some(current) = current
             && let Some(position) = self.tracks.iter().position(|track| track == &current)
         {
@@ -836,23 +949,23 @@ struct HttpSource {
 }
 
 struct HttpInner {
-    client: Client,
+    client: ureq::Agent,
     url: String,
     pos: u64,
     len: Option<u64>,
-    response: Option<Response>,
+    response: Option<ureq::BodyReader<'static>>,
     buffer: Vec<u8>,
     buffer_pos: usize,
 }
 
 impl HttpSource {
     fn new(url: String, len: Option<u64>) -> Result<Self> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .http1_only()
-            .redirect(reqwest::redirect::Policy::limited(10))
+        let client = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_per_read(Some(Duration::from_secs(30)))
             .build()
-            .context("could not initialize HTTP client")?;
+            .into();
         Ok(Self {
             inner: Mutex::new(HttpInner {
                 client,
@@ -883,18 +996,16 @@ impl HttpInner {
         let response = self
             .client
             .get(&self.url)
-            .header(RANGE, range)
-            .header(USER_AGENT, DEFAULT_UA)
-            .send()
+            .header("Range", range)
+            .header("User-Agent", DEFAULT_UA)
+            .call()
             .map_err(|error| io::Error::other(format!("HTTP request failed: {error}")))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        let status = response.status().as_u16();
+        if status == 416 {
             self.response = None;
             return Ok(false);
         }
-        if status != reqwest::StatusCode::PARTIAL_CONTENT
-            && !(status == reqwest::StatusCode::OK && self.pos == 0)
-        {
+        if status != 206 && !(status == 200 && self.pos == 0) {
             return Err(io::Error::other(format!(
                 "audio server returned HTTP {status}"
             )));
@@ -902,18 +1013,24 @@ impl HttpInner {
         if self.len.is_none() {
             self.len = response
                 .headers()
-                .get(CONTENT_RANGE)
+                .get("content-range")
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.rsplit('/').next()?.trim().parse().ok())
                 .or_else(|| {
-                    (status == reqwest::StatusCode::OK)
-                        .then(|| response.content_length().filter(|length| *length > 0))
+                    (status == 200)
+                        .then(|| {
+                            response
+                                .headers()
+                                .get("content-length")
+                                .and_then(|value| value.to_str().ok())
+                                .and_then(|value| value.parse().ok())
+                        })
                         .flatten()
                 });
         }
         self.buffer.resize(HTTP_BUFFER, 0);
         self.buffer_pos = 0;
-        self.response = Some(response);
+        self.response = Some(response.into_body().into_reader());
         Ok(true)
     }
 
@@ -1169,7 +1286,7 @@ fn play_one(
             .unwrap_or_else(|| "?".to_owned())
     );
     println!(
-        "   ↑/+ volume   ↓/- volume   space pause   ,/. seek {}s   ←/p prev   →/n next   a autoplay   q quit",
+        "   ↑/+ vol  ↓/- vol  space pause  ,/. seek {}s  ←/p  →/n  a auto  q quit",
         SEEK_STEP
     );
 
@@ -1416,6 +1533,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_one_letter_flags() {
+        let cli = parse_args(
+            [
+                "-n", "3", "-p", "100", "-N", "-s", "-v", "80", "-S", "query",
+            ]
+            .into_iter()
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(cli.limit, 3);
+        assert_eq!(cli.playlist_limit, 100);
+        assert_eq!(cli.volume, 80);
+        assert!(cli.no_autoplay);
+        assert!(cli.shuffle);
+        assert!(cli.single);
+        assert_eq!(cli.query, ["query"]);
+    }
+
+    #[test]
+    fn rejects_invalid_volume() {
+        assert!(parse_args(["-v", "131"].into_iter().map(OsString::from)).is_err());
+    }
+
+    #[test]
     fn detects_video_and_playlist_urls() {
         assert!(is_video(&url("https://www.youtube.com/watch?v=abc")));
         assert!(is_video(&url("https://youtu.be/abc?t=10")));
@@ -1448,14 +1589,14 @@ mod tests {
 
     #[test]
     fn parses_flat_entries() {
-        let value: Value = serde_json::from_str(
-            r#"{"entries":[{"id":"abc","title":"Hello","duration":65,"url":"https://www.youtube.com/watch?v=abc"},{"id":"NA","title":"bad"}]}"#,
-        )
-        .unwrap();
-        let tracks = entries_to_tracks(&value);
-        assert_eq!(tracks.len(), 1);
+        let tracks = parse_track_lines(
+            "\"abc\"\t\"Hello\"\t65\n\"NA\"\t\"bad\"\tnull\n\"def\"\t\"World\"\tnull",
+        );
+        assert_eq!(tracks.len(), 2);
         assert_eq!(tracks[0].title, "Hello");
         assert_eq!(tracks[0].duration, Some(65));
+        assert_eq!(tracks[1].title, "World");
+        assert_eq!(tracks[1].duration, None);
     }
 
     #[test]
